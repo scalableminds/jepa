@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import PIL
 import torch
+from voxelytics.connect.math import combine_means_stds
 
 
 def _is_tensor_clip(clip):
@@ -94,3 +95,13 @@ def normalize(clip, mean, std, inplace=False):
     clip.sub_(mean[:, None, None, None]).div_(std[:, None, None, None])
 
     return clip
+
+def calculate_mean_and_std(ds, sub_bbs):
+    means, stds, counts = [], [], []
+    for bb in sub_bbs:
+        data = ds.get_layer("color").get_mag(1).read(absolute_bounding_box=bb)
+        means.append(np.mean(data))
+        stds.append(np.std(data))
+        counts.append(data.size)
+        
+    return combine_means_stds(np.array(means), np.array(stds), np.array(counts))

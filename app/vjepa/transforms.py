@@ -83,7 +83,7 @@ class VideoTransform(object):
             device='cpu',
         )
 
-    def __call__(self, buffer):
+    def __call__(self, buffer, mean, std):
 
         if self.auto_augment:
             buffer = [transforms.ToPILImage()(frame) for frame in buffer]
@@ -106,7 +106,7 @@ class VideoTransform(object):
         if self.random_horizontal_flip:
             buffer, _ = video_transforms.horizontal_flip(0.5, buffer)
 
-        buffer = _tensor_normalize_inplace(buffer, self.mean, self.std)
+        buffer = _tensor_normalize_inplace(buffer, mean, std)
         if self.reprob > 0:
             buffer = buffer.permute(1, 0, 2, 3)
             buffer = self.erase_transform(buffer)
@@ -146,8 +146,12 @@ def _tensor_normalize_inplace(tensor, mean, std):
     if tensor.dtype == torch.uint8:
         tensor = tensor.float()
 
+    mean = torch.tensor(mean, dtype=torch.float32)
+    std = torch.tensor(std, dtype=torch.float32)
+
     C, T, H, W = tensor.shape
     tensor = tensor.view(C, -1).permute(1, 0)  # Make C the last dimension
+    
     tensor.sub_(mean).div_(std)
     tensor = tensor.permute(1, 0).view(C, T, H, W)  # Put C back in front
     return tensor

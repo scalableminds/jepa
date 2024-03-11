@@ -274,7 +274,7 @@ def main(args, resume_preempt=False):
         _dlen = unsupervised_loader.num_batches
     if ipe is None:
         ipe = _dlen
-    logger.info(f'iterations per epoch/dataest length: {ipe}/{_dlen}')
+    logger.info(f'iterations per epoch/dataset length: {ipe}/{_dlen}')
 
     # -- init optimizer and scheduler
     optimizer, scaler, scheduler, wd_scheduler = init_opt(

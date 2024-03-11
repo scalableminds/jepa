@@ -26,7 +26,7 @@ class VisionTransformer(nn.Module):
         patch_size=16,
         num_frames=1,
         tubelet_size=2,
-        in_chans=3,
+        in_chans=1,
         embed_dim=768,
         depth=12,
         num_heads=12,

@@ -88,4 +88,18 @@ def init_data(
             drop_last=drop_last,
             log_dir=log_dir)
 
+    elif (data.lower() == 'wkwdataset'):
+        from src.datasets.wkw_dataset import make_wkwdataset
+        dataset, data_loader, dist_sampler = make_wkwdataset(
+            data_paths=root_path,
+            batch_size=batch_size,
+            datasets_weights=datasets_weights,
+            collator=collator,
+            num_workers=num_workers,
+            world_size=world_size,
+            rank=rank,
+            transform=transform,
+            drop_last=drop_last,
+            log_dir=log_dir)
+            
     return (data_loader, dist_sampler)
