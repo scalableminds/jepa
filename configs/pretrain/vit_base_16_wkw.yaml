@@ -5,7 +5,7 @@ data:
   dataset_type: wkwDataset
   datasets:
     - /srv/projects/paper_l4
-  batch_size: 1
+  batch_size: 8
   num_clips: 1 #number of clips per video to sample
   num_frames: 16 #
   tubelet_size: 2

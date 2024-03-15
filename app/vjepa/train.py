@@ -29,6 +29,7 @@ from torch.nn.parallel import DistributedDataParallel
 from src.datasets.data_manager import init_data
 from src.masks.random_tube import MaskCollator as TubeMaskCollator
 from src.masks.multiblock3d import MaskCollator as MB3DMaskCollator
+from src.utils.logging_pytorch import TensorBoardLoggerPytorch
 from src.masks.utils import apply_masks
 from src.utils.distributed import init_distributed, AllReduce
 from src.utils.logging import (
@@ -52,6 +53,7 @@ from app.vjepa.transforms import make_transforms
 log_timings = True
 log_freq = 10
 checkpoint_freq = 1
+image_frequency = 10
 # --
 
 _GLOBAL_SEED = 0
@@ -180,6 +182,7 @@ def main(args, resume_preempt=False):
 
     # -- log/checkpointing paths
     log_file = os.path.join(folder, f'{tag}_r{rank}.csv')
+    tensorboard_dir = os.path.join(folder, 'tensorboard')
     latest_file = f'{tag}-latest.pth.tar'
     latest_path = os.path.join(folder, latest_file)
     load_path = None
@@ -297,6 +300,14 @@ def main(args, resume_preempt=False):
     target_encoder = DistributedDataParallel(target_encoder)
     for p in target_encoder.parameters():
         p.requires_grad = False
+
+    # -- make TensorBoardLogger
+
+    tensorboard_logger = TensorBoardLoggerPytorch(
+            tensorboard_dir,
+            image_frequency=image_frequency,
+            device=device,
+        )
 
     # -- momentum schedule
     momentum_scheduler = (ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
@@ -487,6 +498,8 @@ def main(args, resume_preempt=False):
                         param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
 
                 return (
+                    z,
+                    h,
                     float(loss),
                     float(loss_jepa),
                     float(loss_reg),
@@ -496,7 +509,7 @@ def main(args, resume_preempt=False):
                     grad_stats_pred,
                     optim_stats,
                 )
-            (loss, loss_jepa, loss_reg, _new_lr, _new_wd, grad_stats, grad_stats_pred, optim_stats,), gpu_etime_ms = gpu_timer(train_step)
+            (z, h, loss, loss_jepa, loss_reg, _new_lr, _new_wd, grad_stats, grad_stats_pred, optim_stats,), gpu_etime_ms = gpu_timer(train_step)
             iter_elapsed_time_ms = (time.time() - itr_start_time) * 1000.
             loss_meter.update(loss)
             input_var = float(AllReduce.apply(clips.view(clips.shape[0], -1).var(dim=1).mean(dim=0)))
@@ -507,6 +520,23 @@ def main(args, resume_preempt=False):
             reg_loss_meter.update(loss_reg)
             gpu_time_meter.update(gpu_etime_ms)
             wall_time_meter.update(iter_elapsed_time_ms)
+            step_result={
+            'loss': loss,
+            'loss_jepa': loss_jepa,
+            'loss_reg': loss_reg,
+            }   
+
+            # --Log tensorboard
+            tensorboard_logger.on_batch(
+                step_within_epoch=itr,
+                epoch=epoch,
+                global_step=epoch * ipe + itr,
+                step_result=step_result,
+                lr=_new_lr,
+                clips=clips,
+                masks_enc=h,
+                masks_pred=z,
+            )
 
             # -- Logging
             def log_stats():

@@ -131,12 +131,6 @@ class wkwDataset(torch.utils.data.Dataset):
         ds = wk.Dataset.open(dataset_path)
         data = ds.get_layer("color").get_mag(1).read(absolute_bounding_box=bounding_box) # 1, 224, 224, 16 aka C, W, H, Z
         data = np.transpose(data, (3, 2, 1, 0)) # Z, H, W, C
-    
-
-        # # Convert numpy array to torch tensor
-        # torch_tensor = torch.tensor(data, dtype=torch.float32)
-
-        # tensor_permuted = torch_tensor.permute(0, 3, 1, 2)
 
         if self.transform is not None:
             tensor_permuted = self.transform(data, mean, std)
