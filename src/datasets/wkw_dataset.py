@@ -87,7 +87,7 @@ class wkwDataset(torch.utils.data.Dataset):
         num_clips=1,
         transform=None,
     ):
-        self.data_paths = data_paths
+        self.data = data_paths
         self.datasets_weights = datasets_weights
         self.transform = transform
         self.num_clips = num_clips
@@ -98,19 +98,21 @@ class wkwDataset(torch.utils.data.Dataset):
         self.means = []
         self.stds = []
 
-        for i, data_path in enumerate(self.data_paths):
-            ds = wk.Dataset.open(data_path)
+        for i, data in enumerate(self.data):
+            ds = wk.Dataset.open(data["path"])
             color_layer = ds.get_layer("color")
+            if data["topleft"] is not None:
+                color_layer.bounding_box = wk.BoundingBox(topleft=data["topleft"], size=data["size"])
             sub_bbs = list(color_layer.bounding_box.chunk((224, 224, 16)))
             sub_bbs = [bb for bb in sub_bbs if bb.size == (224, 224, 16)]
-            sample_sub_bbs = random.sample(sub_bbs, int(len(sub_bbs) * 0.001))
+            sample_sub_bbs = random.sample(sub_bbs, max(int(len(sub_bbs) * 0.001), 1))
             logger.info(f"Dataset number {i+1}:Computing mean and std on {len(sample_sub_bbs)} boxes")
             mean, std = calculate_mean_and_std(ds, sample_sub_bbs)
             logger.info(f"Dataset number {i+1}: mean = {mean}, std = {std}")
             self.num_samples_per_dataset.append(len(sub_bbs))
 
             for bb in sub_bbs:
-                samples += [[data_path, bb, mean, std]]
+                samples += [[data["path"], bb, mean, std]]
                 labels += [0]
 
         # [Optional] Weights for each sample to be used

@@ -52,8 +52,8 @@ from app.vjepa.transforms import make_transforms
 # --
 log_timings = True
 log_freq = 10
-checkpoint_freq = 1
-image_frequency = 10
+checkpoint_freq = 10
+image_frequency = 5
 # --
 
 _GLOBAL_SEED = 0
@@ -391,7 +391,7 @@ def main(args, resume_preempt=False):
             itr_start_time = time.time()
 
             try:
-                udata, masks_enc, masks_pred = next(loader)
+                udata, masks_enc, masks_pred = next(loader)     #masks_enc 8x8, masks_pred 8x1456
             except Exception:
                 logger.info('Exhausted data loaders. Refreshing...')
                 loader = iter(unsupervised_loader)
@@ -417,7 +417,7 @@ def main(args, resume_preempt=False):
                     _masks_pred.append(_mp)
 
                 return (clips, _masks_enc, _masks_pred)
-            clips, masks_enc, masks_pred = load_clips()
+            clips, masks_enc, masks_pred = load_clips()     #masks_enc 8x8, masks_pred 8x1456
 
             for _i, m in enumerate(mask_meters):
                 m.update(masks_enc[_i][0].size(-1))
@@ -433,11 +433,11 @@ def main(args, resume_preempt=False):
                     mask-pred.
                     """
                     with torch.no_grad():
-                        h = target_encoder(c)
-                        h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
+                        h = target_encoder(c)   # c = 1x16x224x224
+                        h_raw = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
                         # -- create targets (masked regions of h)
-                        h = apply_masks(h, masks_pred, concat=False)
-                        return h
+                        h = apply_masks(h_raw, masks_pred, concat=False) # 8x1456x768
+                        return h, h_raw
 
                 def forward_context(c, h):
                     """
@@ -462,7 +462,7 @@ def main(args, resume_preempt=False):
                 # Step 1. Forward
                 loss_jepa, loss_reg = 0., 0.
                 with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
-                    h = forward_target(clips)
+                    h, h_raw = forward_target(clips)
                     z = forward_context(clips, h)
                     loss_jepa = loss_fn(z, h)  # jepa prediction loss
                     pstd_z = reg_fn(z)  # predictor variance across patches
@@ -500,6 +500,7 @@ def main(args, resume_preempt=False):
                 return (
                     z,
                     h,
+                    h_raw,
                     float(loss),
                     float(loss_jepa),
                     float(loss_reg),
@@ -509,7 +510,7 @@ def main(args, resume_preempt=False):
                     grad_stats_pred,
                     optim_stats,
                 )
-            (z, h, loss, loss_jepa, loss_reg, _new_lr, _new_wd, grad_stats, grad_stats_pred, optim_stats,), gpu_etime_ms = gpu_timer(train_step)
+            (z, h, h_raw, loss, loss_jepa, loss_reg, _new_lr, _new_wd, grad_stats, grad_stats_pred, optim_stats,), gpu_etime_ms = gpu_timer(train_step)
             iter_elapsed_time_ms = (time.time() - itr_start_time) * 1000.
             loss_meter.update(loss)
             input_var = float(AllReduce.apply(clips.view(clips.shape[0], -1).var(dim=1).mean(dim=0)))
@@ -524,6 +525,9 @@ def main(args, resume_preempt=False):
             'loss': loss,
             'loss_jepa': loss_jepa,
             'loss_reg': loss_reg,
+            'grad_stats': grad_stats,
+            'grad_stats_pred': grad_stats_pred,
+            'optim_stats': optim_stats,
             }   
 
             # --Log tensorboard
@@ -534,8 +538,9 @@ def main(args, resume_preempt=False):
                 step_result=step_result,
                 lr=_new_lr,
                 clips=clips,
-                masks_enc=h,
-                masks_pred=z,
+                masks_enc=z,
+                masks_pred=masks_pred,
+                h_raw=h_raw
             )
 
             # -- Logging
