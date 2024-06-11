@@ -18,6 +18,7 @@ class TensorBoardLoggerPytorch:
     def __init__(
         self,
         tensorboard_dir: Path,
+        tag: str,
         image_frequency: int = 0,
         device: torch.device = torch.device("cpu"),
     ):
@@ -26,7 +27,7 @@ class TensorBoardLoggerPytorch:
 
         self.tensorboard_dir = tensorboard_dir
 
-        self.train_writer = SummaryWriter(str(self.tensorboard_dir + "/train"))
+        self.train_writer = SummaryWriter(str(self.tensorboard_dir + "/train_" + tag))
 
 
     def flush(self) -> None:

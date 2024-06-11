@@ -20,6 +20,7 @@ except Exception:
 import copy
 import time
 import numpy as np
+import json
 
 import torch
 import torch.multiprocessing as mp
@@ -71,6 +72,7 @@ def main(args, resume_preempt=False):
     # ----------------------------------------------------------------------- #
 
     # -- META
+    #compute hash of the args
     cfgs_meta = args.get('meta')
     load_model = cfgs_meta.get('load_checkpoint') or resume_preempt
     r_file = cfgs_meta.get('read_checkpoint', None)
@@ -155,8 +157,8 @@ def main(args, resume_preempt=False):
 
     # -- LOGGING
     cfgs_logging = args.get('logging')
-    folder = cfgs_logging.get('folder')
     tag = cfgs_logging.get('write_tag')
+    folder = os.path.join(cfgs_logging.get('folder'), tag)
 
     # ----------------------------------------------------------------------- #
     # ----------------------------------------------------------------------- #
@@ -181,6 +183,11 @@ def main(args, resume_preempt=False):
         torch.cuda.set_device(device)
 
     # -- log/checkpointing paths
+    best_train_loss = float('inf')
+    if os.path.exists(folder) and not load_model:
+        logger.info(f'Folder {folder} already exists. Exiting...')
+        return
+    os.makedirs(folder, exist_ok=True)
     log_file = os.path.join(folder, f'{tag}_r{rank}.csv')
     tensorboard_dir = os.path.join(folder, 'tensorboard')
     latest_file = f'{tag}-latest.pth.tar'
@@ -307,6 +314,7 @@ def main(args, resume_preempt=False):
             tensorboard_dir,
             image_frequency=image_frequency,
             device=device,
+            tag=tag,
         )
 
     # -- momentum schedule
@@ -316,6 +324,12 @@ def main(args, resume_preempt=False):
     start_epoch = 0
     # -- load training checkpoint
     if load_model or os.path.exists(latest_path):
+        #load best trainloss from folder/best_loss.json, if folder does not exist, set to inf
+        try:
+            with open(os.path.join(folder, 'best_loss.json'), 'r') as f:
+                best_train_loss = json.load(f)['best_train_loss']
+        except Exception:
+            best_train_loss = float('inf')
         (
             encoder,
             predictor,
@@ -540,7 +554,7 @@ def main(args, resume_preempt=False):
                 clips=clips,
                 masks_enc=z,
                 masks_pred=masks_pred,
-                h_raw=h_raw
+                h_raw=h_raw,
             )
 
             # -- Logging
@@ -611,6 +625,11 @@ def main(args, resume_preempt=False):
             assert not np.isnan(loss), 'loss is nan'
 
         # -- Save Checkpoint
+        if best_train_loss > loss_meter.avg:
+            best_train_loss = loss_meter.avg
+            with open(os.path.join(folder, 'best_loss.json'), 'w') as f:
+                json.dump({'best_train_loss': best_train_loss}, f)
+            save_checkpoint(epoch + 1, os.path.join(folder, f'{tag}-best.pth.tar'))
         logger.info('avg. loss %.3f' % loss_meter.avg)
         # -- Save Last
         if epoch % checkpoint_freq == 0 or epoch == (num_epochs - 1):
