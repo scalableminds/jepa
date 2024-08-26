@@ -41,12 +41,14 @@ def make_wkwdataset(
     num_workers=10,
     pin_mem=True,
     log_dir=None,
+    has_segmentation_labels=False
 ):
     dataset = wkwDataset(
         data_paths=data_paths,
         datasets_weights=datasets_weights,
         num_clips=num_clips,
         transform=transform,
+        has_segmentation_labels=has_segmentation_labels
         )
 
     logger.info('wkwDataset dataset created')
@@ -85,7 +87,7 @@ class wkwDataset(torch.utils.data.Dataset):
         data_paths,
         datasets_weights=None,
         num_clips=1,
-        transform=None,,
+        transform=None,
         has_segmentation_labels=False
     ):
         self.data = data_paths
