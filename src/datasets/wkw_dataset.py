@@ -85,7 +85,8 @@ class wkwDataset(torch.utils.data.Dataset):
         data_paths,
         datasets_weights=None,
         num_clips=1,
-        transform=None,
+        transform=None,,
+        has_segmentation_labels=False
     ):
         self.data = data_paths
         self.datasets_weights = datasets_weights
@@ -97,6 +98,7 @@ class wkwDataset(torch.utils.data.Dataset):
         self.num_samples_per_dataset = []
         self.means = []
         self.stds = []
+        self.has_segmentation_labels = has_segmentation_labels
 
         for i, data in enumerate(self.data):
             ds = wk.Dataset.open(data["path"])
@@ -136,6 +138,10 @@ class wkwDataset(torch.utils.data.Dataset):
 
         if self.transform is not None:
             tensor_permuted = self.transform(data, mean, std)
+
+        if self.has_segmentation_labels:
+            label = ds.get_layer("instance_segmentation").get_mag(1).read(absolute_bounding_box=bounding_box)
+            label = np.transpose(label, (3, 2, 1, 0))
 
         return [tensor_permuted], label, clip_indices #[tensor_with_channel] because of num_clips parameter
 
