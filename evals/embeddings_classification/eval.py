@@ -22,6 +22,7 @@ import numpy as np
 import src.models.vision_transformer as vit
 import torch
 import torch.multiprocessing as mp
+
 from src.datasets.data_manager import (
     init_data,
 )
@@ -64,6 +65,7 @@ def main(args_eval, resume_preempt=False):
 
     # -- DATA
     args_data = args_eval.get("data")
+    dataset_paths = args_data.get("datasets", [])
     train_data_path = [args_data.get("dataset_train")]
     val_data_path = [args_data.get("dataset_val")]
     dataset_type = args_data.get("dataset_type", "VideoDataset")
@@ -106,7 +108,7 @@ def main(args_eval, resume_preempt=False):
         folder = os.path.join(folder, eval_tag)
     if not os.path.exists(folder):
         os.makedirs(folder, exist_ok=True)
-    log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
+    log_file = os.path.join(folder, f"{tag}_r{rank}_embeddings_predict.csv")
 
     # Initialize model
 
@@ -132,7 +134,7 @@ def main(args_eval, resume_preempt=False):
 
     dataloader = make_dataloader(
         dataset_type=dataset_type,
-        root_path=train_data_path,
+        root_path=dataset_paths,
         resolution=resolution,
         frames_per_clip=eval_frames_per_clip,
         frame_step=eval_frame_step,
@@ -229,19 +231,6 @@ def make_dataloader(
     num_workers=12,
     subset_file=None,
 ):
-    # # Make Video Transforms
-    # transform = make_transforms(
-    #     training=training,
-    #     num_views_per_clip=num_views_per_segment,
-    #     random_horizontal_flip=False,
-    #     random_resize_aspect_ratio=(0.75, 4 / 3),
-    #     random_resize_scale=(0.08, 1.0),
-    #     reprob=0.25,
-    #     auto_augment=True,
-    #     motion_shift=False,
-    #     crop_size=resolution,
-    # )
-
     data_loader, _ = init_data(
         data=dataset_type,
         root_path=root_path,

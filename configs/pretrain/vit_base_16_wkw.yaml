@@ -4,7 +4,7 @@ tasks_per_node: 8
 data:
   dataset_type: wkwDataset
   datasets:
-    - /srv/projects/paper_l4
+    - path: /srv/projects/paper_l4
   batch_size: 8
   num_clips: 1 #number of clips per video to sample
   num_frames: 16 #
@@ -25,7 +25,7 @@ data_aug:
   - 1.0
   reprob: 0.0
 logging:
-  folder: /home/matthis/jepa_logs
+  folder: /srv/projects/unsupervised-vjepa/jepa_logs_vit_base_16_wkw
   write_tag: jepa
 loss:
   loss_exp: 1.0

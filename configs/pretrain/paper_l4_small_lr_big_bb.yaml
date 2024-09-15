@@ -28,7 +28,7 @@ data_aug:
   # - 1.0
   reprob: 0.0
 logging:
-  folder: /home/matthis/jepa_logs_7
+  folder: /srv/projects/unsupervised-vjepa/jepa_logs_2
   write_tag: jepa
 loss:
   loss_exp: 1.0

@@ -1,0 +1,41 @@
+nodes: 8
+tasks_per_node: 8
+tag: vith16_wkw_test
+eval_name: embeddings_classification
+resume_checkpoint: false
+data:
+  dataset_type: wkwDataset
+  datasets:
+    - path: /srv/projects/paper_l4
+  batch_size: 1
+  num_clips: 1 #number of clips per video to sample
+  num_frames: 16 #
+  tubelet_size: 2
+  sampling_rate: 4
+  crop_size: 224
+  patch_size: 16
+  pin_mem: true
+  num_workers: 12
+optimization:
+  num_epochs: 20
+  batch_size: 1
+  weight_decay: 0.001
+  lr: 0.001
+  start_lr: 0.001
+  final_lr: 0.0
+  warmup: 0.
+  use_bfloat16: true
+pretrain:
+  model_name: vit_base
+  checkpoint_key: target_encoder
+  clip_duration: null
+  frames_per_clip: 16
+  tubelet_size: 2
+  uniform_power: true
+  use_sdpa: true
+  use_silu: false
+  tight_silu: false
+  patch_size: 16
+  folder: /srv/projects/unsupervised-vjepa/jepa_logs
+  checkpoint: jepa-latest.pth.tar  # name of pretrained model file inside folder
+  write_tag: jepa

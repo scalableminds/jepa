@@ -7,26 +7,23 @@
 
 import os
 import pathlib
-import warnings
 import random
-
+import warnings
 from logging import getLogger
 
 import numpy as np
 import pandas as pd
-
-from decord import VideoReader, cpu
-import webknossos as wk
-
-
 import torch
-
-from src.datasets.utils.weighted_sampler import DistributedWeightedSampler
+import webknossos as wk
+from app.vjepa.transforms import make_normalize
+from decord import VideoReader, cpu
 from src.datasets.utils.video.functional import calculate_mean_and_std
+from src.datasets.utils.weighted_sampler import DistributedWeightedSampler
 
 _GLOBAL_SEED = 0
 random.seed(_GLOBAL_SEED)
 logger = getLogger()
+
 
 def make_wkwdataset(
     data_paths,
@@ -41,29 +38,25 @@ def make_wkwdataset(
     num_workers=10,
     pin_mem=True,
     log_dir=None,
-    has_segmentation_labels=False
+    has_segmentation_labels=False,
 ):
     dataset = wkwDataset(
         data_paths=data_paths,
         datasets_weights=datasets_weights,
         num_clips=num_clips,
         transform=transform,
-        has_segmentation_labels=has_segmentation_labels
-        )
+        has_segmentation_labels=has_segmentation_labels,
+    )
 
-    logger.info('wkwDataset dataset created')
+    logger.info("wkwDataset dataset created")
     if datasets_weights is not None:
         dist_sampler = DistributedWeightedSampler(
-            dataset.sample_weights,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True)
+            dataset.sample_weights, num_replicas=world_size, rank=rank, shuffle=True
+        )
     else:
         dist_sampler = torch.utils.data.distributed.DistributedSampler(
-            dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=True)
+            dataset, num_replicas=world_size, rank=rank, shuffle=True
+        )
 
     data_loader = torch.utils.data.DataLoader(
         dataset,
@@ -73,14 +66,15 @@ def make_wkwdataset(
         drop_last=drop_last,
         pin_memory=pin_mem,
         num_workers=num_workers,
-        persistent_workers=num_workers > 0)
-    logger.info('wkwDataset unsupervised data loader created')
+        persistent_workers=num_workers > 0,
+    )
+    logger.info("wkwDataset unsupervised data loader created")
 
     return dataset, data_loader, dist_sampler
 
 
 class wkwDataset(torch.utils.data.Dataset):
-    """ wkw classification dataset. """
+    """wkw classification dataset."""
 
     def __init__(
         self,
@@ -88,11 +82,16 @@ class wkwDataset(torch.utils.data.Dataset):
         datasets_weights=None,
         num_clips=1,
         transform=None,
-        has_segmentation_labels=False
+        has_segmentation_labels=False,
     ):
         self.data = data_paths
         self.datasets_weights = datasets_weights
-        self.transform = transform
+        if transform is not None:
+            self.transform = transform
+        else:
+            # if no augmentation should take place, we still
+            # need normalization and conversion to tensor
+            self.transform = make_normalize()
         self.num_clips = num_clips
 
         # Load wkw paths and labels
@@ -105,12 +104,16 @@ class wkwDataset(torch.utils.data.Dataset):
         for i, data in enumerate(self.data):
             ds = wk.Dataset.open(data["path"])
             color_layer = ds.get_layer("color")
-            if data["topleft"] is not None:
-                color_layer.bounding_box = wk.BoundingBox(topleft=data["topleft"], size=data["size"])
+            if data.get("topleft") is not None:
+                color_layer.bounding_box = wk.BoundingBox(
+                    topleft=data["topleft"], size=data["size"]
+                )
             sub_bbs = list(color_layer.bounding_box.chunk((224, 224, 16)))
             sub_bbs = [bb for bb in sub_bbs if bb.size == (224, 224, 16)]
             sample_sub_bbs = random.sample(sub_bbs, max(int(len(sub_bbs) * 0.001), 1))
-            logger.info(f"Dataset number {i+1}:Computing mean and std on {len(sample_sub_bbs)} boxes")
+            logger.info(
+                f"Dataset number {i+1}:Computing mean and std on {len(sample_sub_bbs)} boxes"
+            )
             mean, std = calculate_mean_and_std(ds, sample_sub_bbs)
             logger.info(f"Dataset number {i+1}: mean = {mean}, std = {std}")
             self.num_samples_per_dataset.append(len(sub_bbs))
@@ -131,21 +134,31 @@ class wkwDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         dataset_path, bounding_box, mean, std = self.samples[index]
-        label = self.labels[index]
 
-        clip_indices = [0,0,0]
+        clip_indices = [0, 0, 0]
         ds = wk.Dataset.open(dataset_path)
-        data = ds.get_layer("color").get_mag(1).read(absolute_bounding_box=bounding_box) # 1, 224, 224, 16 aka C, W, H, Z
-        data = np.transpose(data, (3, 2, 1, 0)) # Z, H, W, C
+        data = (
+            ds.get_layer("color").get_mag(1).read(absolute_bounding_box=bounding_box)
+        )  # 1, 224, 224, 16 aka C, W, H, Z
+        data = np.transpose(data, (3, 2, 1, 0))  # Z, H, W, C
 
-        if self.transform is not None:
-            tensor_permuted = self.transform(data, mean, std)
+        tensor_permuted = self.transform(data, mean, std)
 
         if self.has_segmentation_labels:
-            label = ds.get_layer("instance_segmentation").get_mag(1).read(absolute_bounding_box=bounding_box)
+            label = (
+                ds.get_layer("instance_segmentation")
+                .get_mag(1)
+                .read(absolute_bounding_box=bounding_box)
+            )
             label = np.transpose(label, (3, 2, 1, 0))
+        else:
+            label = self.labels[index]
 
-        return [tensor_permuted], label, clip_indices #[tensor_with_channel] because of num_clips parameter
+        return (
+            [tensor_permuted],
+            label,
+            clip_indices,
+        )  # [tensor_with_channel] because of num_clips parameter
 
     def __len__(self):
         return len(self.samples)
