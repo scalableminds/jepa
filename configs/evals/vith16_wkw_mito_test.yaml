@@ -6,7 +6,10 @@ resume_checkpoint: false
 data:
   dataset_type: wkwDataset
   datasets:
-    - path: /srv/projects/paper_l4
+    - path: /srv/stores/webknossos.org/scalable_minds/l4_dense_mito_volume_0
+      segmentation_layer: instance_segmentation
+      topleft: [125, 125, 50]
+      size: [512, 512, 256]
   batch_size: 1
   num_clips: 1 #number of clips per video to sample
   num_frames: 16 #

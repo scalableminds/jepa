@@ -123,6 +123,20 @@ class VideoNormalize(object):
         return buffer
 
 
+def make_segmentation_label_transform():
+    return SegmentationLabelTransform()
+
+
+class SegmentationLabelTransform(object):
+    """Transforms a segmentation label chunk to the same axis order as the data
+    and to float32 because uint tensors are quite limited in their functions."""
+
+    def __call__(self, buffer):
+        buffer = torch.tensor(buffer, dtype=torch.float32)
+        buffer = buffer.permute(3, 0, 1, 2)  # T H W C -> C T H W
+        return buffer
+
+
 def tensor_normalize(tensor, mean, std):
     """
     Normalize a given tensor by subtracting the mean and dividing the std.

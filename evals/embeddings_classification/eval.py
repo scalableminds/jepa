@@ -22,7 +22,6 @@ import numpy as np
 import src.models.vision_transformer as vit
 import torch
 import torch.multiprocessing as mp
-
 from src.datasets.data_manager import (
     init_data,
 )
@@ -247,6 +246,7 @@ def make_dataloader(
         copy_data=False,
         drop_last=False,
         subset_file=subset_file,
+        has_segmentation_labels=dataset_type.lower() == "wkwdataset",
     )
     return data_loader
 

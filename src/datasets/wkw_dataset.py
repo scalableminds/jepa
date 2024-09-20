@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import torch
 import webknossos as wk
-from app.vjepa.transforms import make_normalize
+from app.vjepa.transforms import make_normalize, make_segmentation_label_transform
 from decord import VideoReader, cpu
 from src.datasets.utils.video.functional import calculate_mean_and_std
 from src.datasets.utils.weighted_sampler import DistributedWeightedSampler
@@ -97,9 +97,9 @@ class wkwDataset(torch.utils.data.Dataset):
         # Load wkw paths and labels
         samples, labels = [], []
         self.num_samples_per_dataset = []
-        self.means = []
-        self.stds = []
         self.has_segmentation_labels = has_segmentation_labels
+        if self.has_segmentation_labels:
+            self.segmentation_label_transform = make_segmentation_label_transform()
 
         for i, data in enumerate(self.data):
             ds = wk.Dataset.open(data["path"])
@@ -120,7 +120,14 @@ class wkwDataset(torch.utils.data.Dataset):
 
             for bb in sub_bbs:
                 samples += [[data["path"], bb, mean, std]]
-                labels += [0]
+
+                if self.has_segmentation_labels:
+                    segmentation_layer_name = data.get(
+                        "segmentation_layer", "segmentation"
+                    )
+                    labels += [segmentation_layer_name]
+                else:
+                    labels += [0]
 
         # [Optional] Weights for each sample to be used
         self.sample_weights = None
@@ -142,15 +149,19 @@ class wkwDataset(torch.utils.data.Dataset):
         )  # 1, 224, 224, 16 aka C, W, H, Z
         data = np.transpose(data, (3, 2, 1, 0))  # Z, H, W, C
 
-        tensor_permuted = self.transform(data, mean, std)
+        tensor_permuted = self.transform(
+            data, mean, std
+        )  # includes rearranging axes to C, Z, H, W
 
         if self.has_segmentation_labels:
-            label = (
-                ds.get_layer("instance_segmentation")
+            label_data = (
+                ds.get_layer(self.labels[index])
                 .get_mag(1)
                 .read(absolute_bounding_box=bounding_box)
             )
-            label = np.transpose(label, (3, 2, 1, 0))
+            # TODO: adapt shape?
+            label_data = np.transpose(label_data, (3, 2, 1, 0))  # Z, H, W, C
+            label = self.segmentation_label_transform(label_data)
         else:
             label = self.labels[index]
 
