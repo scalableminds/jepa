@@ -39,6 +39,6 @@ class LabelPatchwiseEmbed3D(nn.Module):
         x = self.proj(x).flatten(2).transpose(1, 2)
 
         # compute final labels based on the mininum fraction threshold
-        x[x < self.min_segment_fraction] == 0
-        x[x >= self.min_segment_fraction] == 1
+        x[x < self.min_segment_fraction] = 0
+        x[x >= self.min_segment_fraction] = 1
         return x

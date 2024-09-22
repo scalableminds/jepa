@@ -165,12 +165,11 @@ def predict_embeddings(
         with torch.cuda.amp.autocast(dtype=torch.float16, enabled=use_bfloat16):
             # Load data and put on GPU
             clips = torch.cat([d.to(device, non_blocking=True) for d in data[0]], dim=0)
-            clip_indices = [d.to(device, non_blocking=True) for d in data[2]]
             labels = data[1].to(device)
 
             # Forward
             with torch.no_grad():
-                outputs = encoder(clips, clip_indices)
+                outputs = encoder(clips)
             labels_patchwise = label_patchwise_layer(labels)
 
             # store embeddings and labels
