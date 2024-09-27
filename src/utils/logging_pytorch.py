@@ -8,7 +8,6 @@ import pandas as pd
 import torch
 from sklearn.cluster import KMeans
 from torch.utils.tensorboard import SummaryWriter
-
 from voxelytics.connect.training.utils import unscale_inputs
 
 logger = getLogger(__name__)
@@ -22,13 +21,11 @@ class TensorBoardLoggerPytorch:
         image_frequency: int = 0,
         device: torch.device = torch.device("cpu"),
     ):
-
         self.image_frequency = image_frequency
 
         self.tensorboard_dir = tensorboard_dir
 
         self.train_writer = SummaryWriter(str(self.tensorboard_dir + "/train_" + tag))
-
 
     def flush(self) -> None:
         self.train_writer.flush()
@@ -60,7 +57,6 @@ class TensorBoardLoggerPytorch:
         masks_pred: torch.Tensor,
         h_raw: torch.Tensor,
     ) -> None:
-        
         self._log_scalars(global_step, step_result, lr)
 
         if (
@@ -73,17 +69,24 @@ class TensorBoardLoggerPytorch:
             self._log_prediction_clustered(global_step, clips, h_raw)
             self._log_mito_classifier()
 
-    
+    def on_batch_eval(
+        self,
+        clips: torch.Tensor,
+        h: torch.Tensor,
+        labels: torch.Tensor,
+        global_step: int,
+    ):
+        self._log_clips(global_step, clips)
+        self._log_prediction_clustered(global_step, clips, h)
+        self._log_labels(global_step, labels)
+
     def _log_scalars(
         self,
         global_step: int,
         step_result: "StepResult",
         lr: float,
     ) -> None:
-
-        self.train_writer.add_scalar(
-            "batch_loss", step_result["loss"], global_step
-        )
+        self.train_writer.add_scalar("batch_loss", step_result["loss"], global_step)
         self.train_writer.add_scalar(
             "batch_loss_jepa", step_result["loss_jepa"], global_step
         )
@@ -91,31 +94,47 @@ class TensorBoardLoggerPytorch:
             "batch_loss_reg", step_result["loss_reg"], global_step
         )
         self.train_writer.add_scalar(
-            "learning_rate", lr, global_step,
+            "learning_rate",
+            lr,
+            global_step,
         )
         if step_result["grad_stats_pred"] is not None:
             self.train_writer.add_scalar(
-                "grad_stats_pred_first_layer", step_result["grad_stats_pred"].first_layer, global_step
+                "grad_stats_pred_first_layer",
+                step_result["grad_stats_pred"].first_layer,
+                global_step,
             )
             self.train_writer.add_scalar(
-                "grad_stats_pred_last_layer", step_result["grad_stats_pred"].last_layer, global_step
+                "grad_stats_pred_last_layer",
+                step_result["grad_stats_pred"].last_layer,
+                global_step,
             )
             self.train_writer.add_scalar(
-                "grad_stats_pred_global_norm", step_result["grad_stats_pred"].global_norm, global_step
+                "grad_stats_pred_global_norm",
+                step_result["grad_stats_pred"].global_norm,
+                global_step,
             )
         if step_result["grad_stats"] is not None:
             self.train_writer.add_scalar(
-                "grad_stats_first_layer", step_result["grad_stats"].first_layer, global_step
+                "grad_stats_first_layer",
+                step_result["grad_stats"].first_layer,
+                global_step,
             )
             self.train_writer.add_scalar(
-                "grad_stats_last_layer", step_result["grad_stats"].last_layer, global_step
+                "grad_stats_last_layer",
+                step_result["grad_stats"].last_layer,
+                global_step,
             )
             self.train_writer.add_scalar(
-                "grad_stats_global_norm", step_result["grad_stats"].global_norm, global_step
+                "grad_stats_global_norm",
+                step_result["grad_stats"].global_norm,
+                global_step,
             )
         if step_result["optim_stats"] is not None:
             self.train_writer.add_scalar(
-                "optim_stats_exp_avg_avg", step_result["optim_stats"].get("exp_avg").avg, global_step
+                "optim_stats_exp_avg_avg",
+                step_result["optim_stats"].get("exp_avg").avg,
+                global_step,
             )
 
     def _log_clips(
@@ -140,20 +159,29 @@ class TensorBoardLoggerPytorch:
         global_step: int,
         masks_pred: torch.Tensor,
     ) -> None:
-
         batch_size = clips.shape[0]
 
-        reshaped_clip = clips.reshape(batch_size,8,2,14,16,14,16).permute(0,3,5,1,4,6,2) #(BxHxWxDxTHxTWxTD)
+        reshaped_clip = clips.reshape(batch_size, 8, 2, 14, 16, 14, 16).permute(
+            0, 3, 5, 1, 4, 6, 2
+        )  # (BxHxWxDxTHxTWxTD)
 
         mask_tensor = np.ones((batch_size, 1568), dtype=int)
 
         for i in range(mask_tensor.shape[0]):
             mask_tensor[i, masks_pred[0][i].cpu()] = 0
 
-        mask = torch.from_numpy(mask_tensor).reshape(batch_size,8,14,14,1,1,1).permute(0,2,3,1,4,5,6)
+        mask = (
+            torch.from_numpy(mask_tensor)
+            .reshape(batch_size, 8, 14, 14, 1, 1, 1)
+            .permute(0, 2, 3, 1, 4, 5, 6)
+        )
 
-        masked_clips = torch.mul(reshaped_clip.cpu(), mask.cpu()).permute(0,3,6,1,4,2,5).reshape(batch_size,1,16,224,224)
-        
+        masked_clips = (
+            torch.mul(reshaped_clip.cpu(), mask.cpu())
+            .permute(0, 3, 6, 1, 4, 2, 5)
+            .reshape(batch_size, 1, 16, 224, 224)
+        )
+
         num_outputs = min(8, clips.shape[0])
 
         self.train_writer.add_images(
@@ -167,37 +195,54 @@ class TensorBoardLoggerPytorch:
         self,
         global_step: int,
         clips: torch.Tensor,
-        predictions_raw = torch.Tensor,
+        predictions_raw=torch.Tensor,
     ) -> None:
         batch_size = clips.shape[0]
+        num_outputs = min(8, batch_size)
 
-        #flatten predictions_raw from batch_size x 16*16*2 x embedded_dim to batch_size*16*16*2 x embedded_dim
-        predictions_raw_flattened = predictions_raw.reshape(-1, predictions_raw.shape[-1]).cpu().detach().numpy()
+        # Number of patches is (crop_size/patch_size)^2 * num_frames/tubelet_size,
+        # so e.g. 224 * 224 * 16 / (16*16*2).
+        # Flatten predictions_raw from batch_size x num_patches x embedded_dim to batch_size*num_patches x embedded_dim
+        predictions_raw_flattened = (
+            predictions_raw.reshape(-1, predictions_raw.shape[-1])
+            .cpu()
+            .detach()
+            .numpy()
+        )
 
-        #perform kmeans clustering
+        # perform kmeans clustering
         kmeans = KMeans(n_clusters=5, random_state=42).fit(predictions_raw_flattened)
         labels = kmeans.labels_
-        
-        #reshape and upsample
-        labels = labels.reshape(8,14,14,8)
-        upsampled_labels = np.repeat(np.repeat(np.repeat(labels, 16, axis=1), 16, axis=2), 2, axis=3)
 
-        #reorder dimensions to match clips and add a new dimension for the channel
-        upsampled_labels = torch.from_numpy(upsampled_labels).permute(0,3,1,2).unsqueeze(1)
+        # reshape and upsample
+        labels = labels.reshape(num_outputs, 14, 14, 8)
+        upsampled_labels = np.repeat(
+            np.repeat(np.repeat(labels, 16, axis=1), 16, axis=2), 2, axis=3
+        )
 
-        num_outputs = min(8, clips.shape[0])
+        # reorder dimensions to match clips and add a new dimension for the channel
+        upsampled_labels = (
+            torch.from_numpy(upsampled_labels).permute(0, 3, 1, 2).unsqueeze(1)
+        )
 
         blended = torch.zeros((num_outputs, 380, 400, 3))
 
         for i in range(num_outputs):
             fig = plt.figure(frameon=False)
-            plt.axis('off')
-            plt.imshow(clips[i,0,8,:,:].cpu().detach().numpy(), cmap='gray')
-            plt.imshow(upsampled_labels[i,0,8,:,:].cpu().detach().numpy(), cmap='OrRd', alpha=0.3, interpolation='none')
+            plt.axis("off")
+            plt.imshow(clips[i, 0, 8, :, :].cpu().detach().numpy(), cmap="gray")
+            plt.imshow(
+                upsampled_labels[i, 0, 8, :, :].cpu().detach().numpy(),
+                cmap="OrRd",
+                alpha=0.3,
+                interpolation="none",
+            )
             fig.canvas.draw()
             rgba_image = np.array(fig.canvas.renderer.buffer_rgba())
             background = np.ones_like(rgba_image[:, :, :3]) * 255
-            rgb_image = (1 - rgba_image[:, :, 3:4] / 255.0) * background + (rgba_image[:, :, :3] / 255.0) * (rgba_image[:, :, 3:4] / 255.0)
+            rgb_image = (1 - rgba_image[:, :, 3:4] / 255.0) * background + (
+                rgba_image[:, :, :3] / 255.0
+            ) * (rgba_image[:, :, 3:4] / 255.0)
             rgb_image = rgb_image[50:-50, 120:-120, :]
             blended[i] = torch.tensor(rgb_image)
             plt.close(fig)
@@ -209,13 +254,10 @@ class TensorBoardLoggerPytorch:
             dataformats="NHWC",
         )
 
-    def _log_mito_classifier(
-        self,
-        ):
+    def _log_labels(self, global_step, labels):
         pass
 
-
-
-
- 
-        
+    def _log_mito_classifier(
+        self,
+    ):
+        pass

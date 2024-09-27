@@ -27,6 +27,7 @@ from src.datasets.data_manager import (
 )
 from src.models.utils.label_patchwise_embed import LabelPatchwiseEmbed3D
 from src.utils.distributed import init_distributed
+from src.utils.logging_pytorch import TensorBoardLoggerPytorch
 
 logging.basicConfig()
 logger = logging.getLogger()
@@ -102,12 +103,12 @@ def main(args_eval, resume_preempt=False):
     logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
 
     # -- log/checkpointing paths
-    folder = os.path.join(pretrain_folder, "embeddings_classification/")
+    folder = os.path.join(pretrain_folder, "embeddings_classification_no_pos_embed/")
     if eval_tag is not None:
         folder = os.path.join(folder, eval_tag)
     if not os.path.exists(folder):
         os.makedirs(folder, exist_ok=True)
-    log_file = os.path.join(folder, f"{tag}_r{rank}_embeddings_predict.csv")
+    tensorboard_dir = os.path.join(folder, "tensorboard")
 
     # Initialize model
 
@@ -149,17 +150,36 @@ def main(args_eval, resume_preempt=False):
 
     logger.info("Dataloader created...")
 
+    tensorboard_logger = TensorBoardLoggerPytorch(
+        tensorboard_dir,
+        image_frequency=1,
+        device=device,
+        tag=eval_tag,
+    )
+
     # TODO: make foreground id and fraction adaptable
     label_patchwise_layer = LabelPatchwiseEmbed3D(
         patch_size=patch_size, tubelet_size=tubelet_size
     )
     predict_embeddings(
-        device, encoder, dataloader, label_patchwise_layer, use_bfloat16, folder
+        device,
+        encoder,
+        dataloader,
+        label_patchwise_layer,
+        use_bfloat16,
+        folder,
+        tensorboard_logger,
     )
 
 
 def predict_embeddings(
-    device, encoder, data_loader, label_patchwise_layer, use_bfloat16, folder
+    device,
+    encoder,
+    data_loader,
+    label_patchwise_layer,
+    use_bfloat16,
+    folder,
+    tensorboard_logger,
 ):
     for itr, data in enumerate(data_loader):
         with torch.cuda.amp.autocast(dtype=torch.float16, enabled=use_bfloat16):
@@ -170,14 +190,18 @@ def predict_embeddings(
             # Forward
             with torch.no_grad():
                 outputs = encoder(clips)
+                # TODO: use layer norm as in training?
             labels_patchwise = label_patchwise_layer(labels)
 
+            tensorboard_logger.on_batch_eval(
+                clips=clips, h=outputs, labels=labels, global_step=itr
+            )
             # store embeddings and labels
             np.save(
-                f"{folder}batch_{itr}_embeddings.npy", outputs.cpu().detach().numpy()
+                f"{folder}_batch_{itr}_embeddings.npy", outputs.cpu().detach().numpy()
             )
             np.save(
-                f"{folder}batch_{itr}_labels.npy",
+                f"{folder}_batch_{itr}_labels.npy",
                 labels_patchwise.cpu().detach().numpy(),
             )
 
@@ -274,6 +298,7 @@ def init_model(
         use_sdpa=use_sdpa,
         use_SiLU=use_SiLU,
         tight_SiLU=tight_SiLU,
+        use_positional_embedding=False,
     )
 
     encoder.to(device)
