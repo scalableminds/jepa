@@ -195,7 +195,7 @@ def predict_embeddings(
 
             labels_patchwise = label_patchwise_layer(labels)
 
-            tensorboard_logger.on_batch_eval(
+            tensorboard_logger.on_batch_downstream_images(
                 clips=clips,
                 h=outputs_normalized,
                 labels=labels,

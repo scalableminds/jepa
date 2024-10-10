@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 from torch.utils.tensorboard import SummaryWriter
 from voxelytics.connect.training.utils import unscale_inputs
 
@@ -67,18 +68,33 @@ class TensorBoardLoggerPytorch:
             self._log_clips(global_step, clips)
             self._log_mask(clips, global_step, masks_pred)
             self._log_prediction_clustered(global_step, clips, h_raw)
-            self._log_mito_classifier()
 
-    def on_batch_eval(
+    def on_batch_downstream_images(
         self,
         clips: torch.Tensor,
         h: torch.Tensor,
         labels: torch.Tensor,
+        labels_patchwise: torch.Tensor,
         global_step: int,
     ):
-        self._log_clips(global_step, clips)
-        self._log_prediction_clustered(global_step, clips, h)
-        self._log_labels(global_step, labels)
+        if self.image_frequency > 0:
+            self._log_clips(global_step, clips)
+            self._log_prediction_clustered(global_step, clips, h)
+            self._log_labels(global_step, labels)
+            self._log_labels_patchwise(global_step, clips, labels_patchwise)
+
+    def on_batch_downstream(
+        self,
+        embeddings: np.ndarray,
+        labels: np.ndarray,
+        downstream_metrics_test: Dict[float],
+        downstream_metrics_train: Dict[float],
+        global_step: int,
+    ):
+        self._log_embeddings_pca_with_labels(embeddings, labels, global_step)
+        self._log_downstream_scalars(
+            global_step, downstream_metrics_test, downstream_metrics_train
+        )
 
     def _log_scalars(
         self,
@@ -160,6 +176,7 @@ class TensorBoardLoggerPytorch:
         masks_pred: torch.Tensor,
     ) -> None:
         batch_size = clips.shape[0]
+        middle_slice = clips.shape[2] // 2
 
         reshaped_clip = clips.reshape(batch_size, 8, 2, 14, 16, 14, 16).permute(
             0, 3, 5, 1, 4, 6, 2
@@ -182,11 +199,12 @@ class TensorBoardLoggerPytorch:
             .reshape(batch_size, 1, 16, 224, 224)
         )
 
-        num_outputs = min(8, clips.shape[0])
+        num_outputs = min(8, batch_size)
+        middle_slice = clips.shape[2] // 2
 
         self.train_writer.add_images(
             "batch_0_images_masked",
-            masked_clips[:num_outputs, :, 0, :, :],
+            masked_clips[:num_outputs, :, middle_slice, :, :],
             global_step=global_step,
             dataformats="NCHW",
         )
@@ -199,6 +217,7 @@ class TensorBoardLoggerPytorch:
     ) -> None:
         batch_size = clips.shape[0]
         num_outputs = min(8, batch_size)
+        middle_slice = clips.shape[2] // 2
 
         # Number of patches is (crop_size/patch_size)^2 * num_frames/tubelet_size,
         # so e.g. 224 * 224 * 16 / (16*16*2).
@@ -215,24 +234,24 @@ class TensorBoardLoggerPytorch:
         labels = kmeans.labels_
 
         # reshape and upsample
-        labels = labels.reshape(num_outputs, 14, 14, 8)
+        labels = labels.reshape(num_outputs, 8, 14, 14)
         upsampled_labels = np.repeat(
-            np.repeat(np.repeat(labels, 16, axis=1), 16, axis=2), 2, axis=3
+            np.repeat(np.repeat(labels, 2, axis=1), 16, axis=2), 16, axis=3
         )
 
-        # reorder dimensions to match clips and add a new dimension for the channel
-        upsampled_labels = (
-            torch.from_numpy(upsampled_labels).permute(0, 3, 1, 2).unsqueeze(1)
-        )
+        # add a new dimension for the channel
+        upsampled_labels = torch.from_numpy(upsampled_labels).unsqueeze(1)
 
         blended = torch.zeros((num_outputs, 380, 400, 3))
 
         for i in range(num_outputs):
             fig = plt.figure(frameon=False)
             plt.axis("off")
-            plt.imshow(clips[i, 0, 8, :, :].cpu().detach().numpy(), cmap="gray")
             plt.imshow(
-                upsampled_labels[i, 0, 8, :, :].cpu().detach().numpy(),
+                clips[i, 0, middle_slice, :, :].cpu().detach().numpy(), cmap="gray"
+            )
+            plt.imshow(
+                upsampled_labels[i, 0, middle_slice, :, :].cpu().detach().numpy(),
                 cmap="OrRd",
                 alpha=0.3,
                 interpolation="none",
@@ -254,10 +273,92 @@ class TensorBoardLoggerPytorch:
             dataformats="NHWC",
         )
 
-    def _log_labels(self, global_step, labels):
-        pass
-
-    def _log_mito_classifier(
-        self,
+    def _log_embeddings_pca_with_labels(
+        self, embeddings: np.ndarray, labels: np.ndarray, global_step: int
     ):
-        pass
+        pca = PCA(n_components=2)
+        pca.fit(embeddings)
+        embeddings_2d = pca.transform(embeddings)
+        plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=labels, alpha=0.5)
+        
+        self.train_writer.add_figure(
+            "embeddings_pca",
+            plt.gcf(),
+            global_step=global_step,
+        )
+
+    def _log_downstream_scalars(
+        self,
+        global_step: int,
+        downstream_metrics_test: Dict[float],
+        downstream_metrics_train: Dict[float],
+    ):
+        metrics = ["precision", "recall", "f1", "accuracy"]
+        for metric in metrics:
+            self.train_writer.add_scalar(
+                f"downstream_{metric}_test",
+                downstream_metrics_test[metric],
+                global_step,
+            )
+
+            self.train_writer.add_scalar(
+                f"downstream_{metric}_train",
+                downstream_metrics_train[metric],
+                global_step,
+            )
+
+    def _log_labels(self, global_step, labels):
+        num_outputs = min(8, labels.shape[0])
+        middle_slice = labels.shape[2] // 2
+
+        self.train_writer.add_images(
+            "batch_0_images_labels",
+            labels[:num_outputs, :, middle_slice, :, :],
+            global_step=global_step,
+            dataformats="NCHW",
+        )
+
+    def _log_labels_patchwise(self, global_step, clips, labels):
+        num_outputs = min(8, clips.shape[0])
+        middle_slice = clips.shape[2] // 2
+
+        # reshape and upsample
+        labels = labels.squeeze(-1)
+        labels = labels.reshape(num_outputs, 8, 14, 14).cpu().detach().numpy()
+        upsampled_labels = np.repeat(
+            np.repeat(np.repeat(labels, 2, axis=1), 16, axis=2), 16, axis=3
+        )
+
+        # add a new dimension for the channel
+        upsampled_labels = torch.from_numpy(upsampled_labels).unsqueeze(1)
+
+        blended = torch.zeros((num_outputs, 380, 400, 3))
+
+        for i in range(num_outputs):
+            fig = plt.figure(frameon=False)
+            plt.axis("off")
+            plt.imshow(
+                clips[i, 0, middle_slice, :, :].cpu().detach().numpy(), cmap="gray"
+            )
+            plt.imshow(
+                upsampled_labels[i, 0, middle_slice, :, :].cpu().detach().numpy(),
+                cmap="OrRd",
+                alpha=0.3,
+                interpolation="none",
+            )
+            fig.canvas.draw()
+            rgba_image = np.array(fig.canvas.renderer.buffer_rgba())
+            background = np.ones_like(rgba_image[:, :, :3]) * 255
+            rgb_image = (1 - rgba_image[:, :, 3:4] / 255.0) * background + (
+                rgba_image[:, :, :3] / 255.0
+            ) * (rgba_image[:, :, 3:4] / 255.0)
+            rgb_image = rgb_image[50:-50, 120:-120, :]
+            blended[i] = torch.tensor(rgb_image)
+            plt.close(fig)
+
+        self.train_writer.add_images(
+            "batch_0_images_labels_patchwise",
+            blended,
+            global_step=global_step,
+            dataformats="NHWC",
+        )
