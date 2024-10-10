@@ -191,7 +191,6 @@ def predict_embeddings(
             # Forward
             with torch.no_grad():
                 outputs = encoder(clips)
-                # TODO: use layer norm as in training?
                 outputs_normalized = F.layer_norm(outputs, (outputs.size(-1),))
 
             labels_patchwise = label_patchwise_layer(labels)
