@@ -22,6 +22,7 @@ import numpy as np
 import src.models.vision_transformer as vit
 import torch
 import torch.multiprocessing as mp
+import torch.nn.functional as F
 from src.datasets.data_manager import (
     init_data,
 )
@@ -79,7 +80,7 @@ def main(args_eval, resume_preempt=False):
     # -- OPTIMIZATION
     args_opt = args_eval.get("optimization")
     resolution = args_opt.get("resolution", 224)
-    batch_size = 1
+    batch_size = args_opt.get("batch_size", 1)
     use_bfloat16 = args_opt.get("use_bfloat16")
 
     # -- EXPERIMENT-ID/TAG (optional)
@@ -103,7 +104,7 @@ def main(args_eval, resume_preempt=False):
     logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
 
     # -- log/checkpointing paths
-    folder = os.path.join(pretrain_folder, "embeddings_classification_no_pos_embed/")
+    folder = os.path.join(pretrain_folder, "embeddings_classification/")
     if eval_tag is not None:
         folder = os.path.join(folder, eval_tag)
     if not os.path.exists(folder):
@@ -191,14 +192,21 @@ def predict_embeddings(
             with torch.no_grad():
                 outputs = encoder(clips)
                 # TODO: use layer norm as in training?
+                outputs_normalized = F.layer_norm(outputs, (outputs.size(-1),))
+
             labels_patchwise = label_patchwise_layer(labels)
 
             tensorboard_logger.on_batch_eval(
-                clips=clips, h=outputs, labels=labels, global_step=itr
+                clips=clips,
+                h=outputs_normalized,
+                labels=labels,
+                labels_patchwise=labels_patchwise,
+                global_step=itr,
             )
             # store embeddings and labels
             np.save(
-                f"{folder}_batch_{itr}_embeddings.npy", outputs.cpu().detach().numpy()
+                f"{folder}_batch_{itr}_embeddings.npy",
+                outputs_normalized.cpu().detach().numpy(),
             )
             np.save(
                 f"{folder}_batch_{itr}_labels.npy",
@@ -298,7 +306,7 @@ def init_model(
         use_sdpa=use_sdpa,
         use_SiLU=use_SiLU,
         tight_SiLU=tight_SiLU,
-        use_positional_embedding=False,
+        use_positional_embedding=True,
     )
 
     encoder.to(device)
