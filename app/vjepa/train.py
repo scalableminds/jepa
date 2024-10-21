@@ -38,6 +38,7 @@ from src.datasets.data_manager import init_data
 from src.masks.multiblock3d import MaskCollator as MB3DMaskCollator
 from src.masks.random_tube import MaskCollator as TubeMaskCollator
 from src.masks.utils import apply_masks
+from src.models.utils.label_patchwise_embed import LabelPatchwiseEmbed3D
 from src.utils.distributed import AllReduce, init_distributed
 from src.utils.logging import (
     AverageMeter,
@@ -165,12 +166,18 @@ def main(args, resume_preempt=False):
 
     # -- DOWNSTREAM CLASSIFICATION
     cfgs_downstream = args.get("downstream", None)
-    cfgs_data_downstream = cfgs_downstream.get("data")
-    dataset_type_downstream = cfgs_data_downstream.get("dataset_type", "VideoDataset")
-    dataset_paths_downstream = cfgs_data_downstream.get("datasets", [])
-    frames_per_clip_downstream = cfgs_data_downstream.get("frames_per_clip", 16)
-    cgfs_opt_downstream = cfgs_downstream.get("optimization")
-    resolution_downstream = cgfs_opt_downstream.get("resolution", 224)
+    if cfgs_downstream is not None:
+        frequency_downstream = cfgs_downstream.get("frequency")
+        cfgs_data_downstream = cfgs_downstream.get("data")
+        dataset_type_downstream = cfgs_data_downstream.get(
+            "dataset_type", "VideoDataset"
+        )
+        dataset_paths_downstream = cfgs_data_downstream.get("datasets", [])
+        frames_per_clip_downstream = cfgs_data_downstream.get("frames_per_clip", 16)
+        cfgs_opt_downstream = cfgs_downstream.get("optimization")
+        patience_downstream = cfgs_opt_downstream.get("patience")
+        num_epochs_downstream = cfgs_opt_downstream.get("num_epochs")
+        classifier_kwargs_downstream = cfgs_opt_downstream.get("classifier_kwargs", {})
 
     # ----------------------------------------------------------------------- #
     # ----------------------------------------------------------------------- #
@@ -298,9 +305,8 @@ def main(args, resume_preempt=False):
         data_loader_downstream = make_data_loader_downstream(
             dataset_type=dataset_type_downstream,
             root_path=dataset_paths_downstream,
-            resolution=resolution_downstream,
             frames_per_clip=frames_per_clip_downstream,
-            frame_step=sampling_rate,
+            sampling_rate=sampling_rate,
             eval_duration=duration,
             num_segments=1,
             num_views_per_segment=1,
@@ -308,6 +314,10 @@ def main(args, resume_preempt=False):
             batch_size=batch_size,
             world_size=world_size,
             rank=rank,
+        )
+
+        label_patchwise_layer = LabelPatchwiseEmbed3D(
+            patch_size=patch_size, tubelet_size=tubelet_size
         )
 
     try:
@@ -733,6 +743,28 @@ def main(args, resume_preempt=False):
                 save_every_path = os.path.join(folder, save_every_file)
                 save_checkpoint(epoch + 1, save_every_path)
 
+        # Run downstrem classification
+        if (
+            cfgs_downstream is not None
+            and frequency_downstream > 0
+            and epoch % frequency_downstream == 0
+        ):
+            run_downstream_eval(
+                device,
+                target_encoder,
+                data_loader_downstream,
+                label_patchwise_layer,
+                num_epochs_downstream,
+                patience_downstream,
+                dtype,
+                mixed_precision,
+                folder,
+                tensorboard_logger,
+                # TODO: check if this is correct
+                (epoch + 1) * ipe,
+                classifier_kwargs_downstream,
+            )
+
 
 def make_data_loader_downstream(
     root_path,
@@ -740,7 +772,6 @@ def make_data_loader_downstream(
     world_size,
     rank,
     dataset_type="WkWDataset",
-    resolution=224,
     frames_per_clip=16,
     sampling_rate=4,
     num_segments=8,
@@ -778,16 +809,20 @@ def run_downstream_eval(
     label_patchwise_layer,
     num_epochs,
     patience,
-    use_bfloat16,
+    dtype,
+    mixed_precision,
     folder,
     tensorboard_logger,
     global_step,
+    classifier_kwargs,
 ):
     embeddings = []
     embedding_labels = []
+    # data_loader.set_epoch(epoch)
+    breakpoint()
 
     for itr, data in enumerate(data_loader):
-        with torch.cuda.amp.autocast(dtype=torch.float16, enabled=use_bfloat16):
+        with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
             # Load data and put on GPU
             clips = torch.cat([d.to(device, non_blocking=True) for d in data[0]], dim=0)
             labels = data[1].to(device)
@@ -799,7 +834,7 @@ def run_downstream_eval(
 
             labels_patchwise = label_patchwise_layer(labels)
 
-            # log only one batch so that
+            # log only one batch so that the steps match the train logging steps
             if itr == 0:
                 tensorboard_logger.on_batch_downstream_images(
                     clips=clips,
@@ -810,8 +845,13 @@ def run_downstream_eval(
                 )
             embeddings.append(outputs_normalized.cpu().detach().numpy())
             embedding_labels.append(labels_patchwise.cpu().detach().numpy())
-    embeddings = np.concatenate([embedding.squeeze for embedding in embeddings])
-    embedding_labels = np.concatenate([label.squeeze() for label in embedding_labels])
+    embeddings = np.array(embeddings)
+    embeddings = np.reshape(embeddings, (-1, embeddings.shape[-1]))
+
+    embedding_labels = np.array(embedding_labels)
+    embedding_labels = np.reshape(
+        embedding_labels, (-1, embedding_labels.shape[-1])
+    ).squeeze()
 
     X_train, X_test, y_train, y_test = train_test_split(
         embeddings,
@@ -820,12 +860,20 @@ def run_downstream_eval(
         test_size=0.2,
         random_state=1,
     )
-    clf = MLPClassifier(
-        random_state=1,
-        early_stopping=True,
-        n_iter_no_change=patience,
-        max_iter=num_epochs,
-    ).fit(X_train, y_train)
+    try:
+        clf = MLPClassifier(
+            random_state=1,
+            early_stopping=True,
+            n_iter_no_change=patience,
+            max_iter=num_epochs,
+            **classifier_kwargs,
+        ).fit(X_train, y_train)
+    except FloatingPointError as e:
+        logger.warning(
+            f"Couldn't train classifier for global step {global_step} due to {e}."
+            "Consider changing your classifier parameters."
+        )
+        return
     y_pred = clf.predict(X_test)
     y_pred_train = clf.predict(X_train)
     metrics_results_test = {

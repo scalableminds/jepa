@@ -78,8 +78,8 @@ class TensorBoardLoggerPytorch:
         global_step: int,
     ):
         if self.image_frequency > 0:
-            self._log_clips(global_step, clips)
-            self._log_prediction_clustered(global_step, clips, h)
+            self._log_clips(global_step, clips, is_downstream=True)
+            self._log_prediction_clustered(global_step, clips, h, is_downstream=True)
             self._log_labels(global_step, labels)
             self._log_labels_patchwise(global_step, clips, labels_patchwise)
 
@@ -87,8 +87,8 @@ class TensorBoardLoggerPytorch:
         self,
         embeddings: np.ndarray,
         labels: np.ndarray,
-        downstream_metrics_test: Dict[float],
-        downstream_metrics_train: Dict[float],
+        downstream_metrics_test: Dict[str, float],
+        downstream_metrics_train: Dict[str, float],
         global_step: int,
     ):
         self._log_embeddings_pca_with_labels(embeddings, labels, global_step)
@@ -154,16 +154,15 @@ class TensorBoardLoggerPytorch:
             )
 
     def _log_clips(
-        self,
-        global_step: int,
-        clips: torch.Tensor,
+        self, global_step: int, clips: torch.Tensor, is_downstream: bool = False
     ) -> None:
         # clips have dimensions (batch_size, channels, depth, width, height)
+        log_label = "downstream_batch_0_images" if is_downstream else "batch_0_images"
 
         num_outputs = min(8, clips.shape[0])
         middle_slice = clips.shape[2] // 2
         self.train_writer.add_images(
-            "batch_0_images",
+            log_label,
             clips[:num_outputs, :, middle_slice, :, :],
             global_step=global_step,
             dataformats="NCHW",
@@ -214,7 +213,14 @@ class TensorBoardLoggerPytorch:
         global_step: int,
         clips: torch.Tensor,
         predictions_raw=torch.Tensor,
+        is_downstream: bool = False,
     ) -> None:
+        log_label = (
+            "downstream_batch_0_images_clustered"
+            if is_downstream
+            else "batch_0_images_clustered"
+        )
+
         batch_size = clips.shape[0]
         num_outputs = min(8, batch_size)
         middle_slice = clips.shape[2] // 2
@@ -267,7 +273,7 @@ class TensorBoardLoggerPytorch:
             plt.close(fig)
 
         self.train_writer.add_images(
-            "batch_0_images_clustered",
+            log_label,
             blended,
             global_step=global_step,
             dataformats="NHWC",
@@ -280,7 +286,7 @@ class TensorBoardLoggerPytorch:
         pca.fit(embeddings)
         embeddings_2d = pca.transform(embeddings)
         plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=labels, alpha=0.5)
-        
+
         self.train_writer.add_figure(
             "embeddings_pca",
             plt.gcf(),
@@ -290,8 +296,8 @@ class TensorBoardLoggerPytorch:
     def _log_downstream_scalars(
         self,
         global_step: int,
-        downstream_metrics_test: Dict[float],
-        downstream_metrics_train: Dict[float],
+        downstream_metrics_test: Dict[str, float],
+        downstream_metrics_train: Dict[str, float],
     ):
         metrics = ["precision", "recall", "f1", "accuracy"]
         for metric in metrics:
@@ -312,7 +318,7 @@ class TensorBoardLoggerPytorch:
         middle_slice = labels.shape[2] // 2
 
         self.train_writer.add_images(
-            "batch_0_images_labels",
+            "downstream_batch_0_labels",
             labels[:num_outputs, :, middle_slice, :, :],
             global_step=global_step,
             dataformats="NCHW",
@@ -357,7 +363,7 @@ class TensorBoardLoggerPytorch:
             plt.close(fig)
 
         self.train_writer.add_images(
-            "batch_0_images_labels_patchwise",
+            "downstream_batch_0_labels_patchwise",
             blended,
             global_step=global_step,
             dataformats="NHWC",
