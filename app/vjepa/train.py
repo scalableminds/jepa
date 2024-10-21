@@ -819,7 +819,6 @@ def run_downstream_eval(
     embeddings = []
     embedding_labels = []
     # data_loader.set_epoch(epoch)
-    breakpoint()
 
     for itr, data in enumerate(data_loader):
         with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
